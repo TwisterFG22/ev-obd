@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f1720">
+<title>EV Battery OBD</title>
+<style>
+  :root{--bg:#0f1720;--card:#17212c;--line:#263445;--txt:#e6edf3;--mut:#8b9bab;--acc:#3fb6ff;
+        --ok:#3ccf7a;--warn:#f0a63a;--err:#ff5d6c;--der:#8aa8ff}
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
+  header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 12px}
+  h1{font-size:17px;margin:0 0 6px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  button,select,input{font:inherit;color:var(--txt);background:var(--card);border:1px solid var(--line);
+        border-radius:10px;padding:10px 12px}
+  button{cursor:pointer}
+  button.pri{background:var(--acc);color:#04121d;border-color:var(--acc);font-weight:600}
+  button:disabled{opacity:.45}
+  #status{font-size:13px;color:var(--mut);margin-top:6px}
+  nav{display:flex;gap:4px;margin-top:8px;overflow-x:auto}
+  nav button{padding:8px 12px;border-radius:999px;font-size:14px;white-space:nowrap}
+  nav button.on{background:var(--acc);color:#04121d;border-color:var(--acc)}
+  main{padding:12px}
+  section{display:none}
+  section.on{display:block}
+  .big{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
+  .tile .k{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  .tile .v{font-size:30px;font-weight:700;margin-top:2px}
+  .tile .s{font-size:12px;color:var(--mut)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  td,th{padding:7px 6px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--mut);font-weight:500;font-size:12px}
+  td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+  .V{color:var(--ok)} .C{color:var(--warn)} .D{color:var(--der)} .E{color:var(--err)}
+  pre{background:#0a1118;border:1px solid var(--line);border-radius:10px;padding:10px;overflow:auto;
+      font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre;max-height:60vh}
+  .hint{font-size:13px;color:var(--mut);margin:8px 0}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+  label{font-size:13px;color:var(--mut)}
+  .grow{flex:1;min-width:120px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔋 EV Battery OBD <span style="font-weight:400;color:var(--mut);font-size:13px">ELM327</span></h1>
+  <div class="row">
+    <button class="pri" id="btnBle">Ligar BLE</button>
+    <button id="btnSer">Ligar Bluetooth clássico</button>
+    <select id="car"></select>
+    <button id="btnOff" disabled>Desligar</button>
+  </div>
+  <div id="status">Desligado</div>
+  <nav>
+    <button data-t="live" class="on">Ao vivo</button>
+    <button data-t="did">DID</button>
+    <button data-t="term">Terminal</button>
+    <button data-t="log">Log</button>
+    <button data-t="info">Ajuda</button>
+  </nav>
+</header>
+<main>
+  <section id="live" class="on">
+    <div class="big">
+      <div class="tile"><div class="k">SOH</div><div class="v" id="tSoh">—</div><div class="s" id="tSohS">&nbsp;</div></div>
+      <div class="tile"><div class="k">SOC</div><div class="v" id="tSoc">—</div><div class="s" id="tSocS">&nbsp;</div></div>
+    </div>
+    <div class="row" style="margin-bottom:10px">
+      <button class="pri" id="btnSoh">⚡ SOH rápido</button>
+      <button id="btnOnce">Ler tudo</button>
+      <button id="btnLoop">▶ Ciclo</button>
+      <select id="interval"><option>5</option><option selected>10</option><option>30</option><option>60</option></select>
+      <label>s</label>
+      <input id="nominal" class="grow" inputmode="decimal" placeholder="kWh nominal (SOH derivado)">
+    </div>
+    <table><thead><tr><th>DID</th><th>Campo</th><th style="text-align:right">Valor</th><th></th></tr></thead>
+      <tbody id="rows"></tbody></table>
+    <p class="hint"><span class="V">●</span> verificado pela comunidade noutro carro da plataforma ·
+      <span class="C">●</span> publicado, sem verificação · <span class="D">●</span> derivado</p>
+  </section>
+
+  <section id="did">
+    <div class="box">
+      <div class="row">
+        <input id="didIn" class="grow" placeholder="DID (ex.: 028C, F190)" autocapitalize="characters">
+        <button class="pri" id="btnDid">Ler</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input id="didTx" class="grow" placeholder="TX (opcional)" autocapitalize="characters">
+        <input id="didRx" class="grow" placeholder="RX (opcional)" autocapitalize="characters">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="btnIdent">Identificação ECU</button>
+        <button id="btnVin">Ler VIN</button>
+      </div>
+      <p class="hint">TX/RX vazios: usa o alvo do DID conhecido ou o BMS da família. 3 hex = 11 bit, 8 hex = 29 bit, BMW: 6F1:07.</p>
+    </div>
+    <pre id="didOut"></pre>
+  </section>
+
+  <section id="term">
+    <div class="row" style="margin-bottom:8px">
+      <input id="termIn" class="grow" placeholder="ATI, ATRV, 22F190…" autocapitalize="characters">
+      <button class="pri" id="btnTerm">Enviar</button>
+    </div>
+    <pre id="termOut"></pre>
+  </section>
+
+  <section id="log">
+    <div class="row" style="margin-bottom:8px">
+      <button id="btnCsv">Descarregar CSV</button>
+      <button id="btnCopy">Copiar CSV</button>
+      <button id="btnClr">Limpar</button>
+      <span class="hint" id="csvN">0 linhas</span>
+    </div>
+    <pre id="logOut"></pre>
+  </section>
+
+  <section id="info">
+    <div class="box">
+      <p><b>Que botão uso?</b></p>
+      <p class="hint"><b>Ligar BLE</b> — adaptadores Bluetooth Low Energy (não aparecem nas definições de Bluetooth do
+        telemóvel; ex.: Vgate iCar Pro BLE, Veepeak BLE+, OBDLink CX). Funciona no Chrome para Android.</p>
+      <p class="hint"><b>Ligar Bluetooth clássico</b> — adaptadores SPP (emparelham nas definições, PIN 1234/0000).
+        Usa a Web Serial API; só aparece se o teu Chrome a suportar. Emparelha primeiro o adaptador nas definições.</p>
+      <p class="hint">A página tem de estar aberta em <b>https://</b> (ex.: GitHub Pages) no Chrome. Não funciona dentro
+        de outras apps nem no Firefox/Samsung Internet.</p>
+      <p class="hint">Só faz leituras (serviço 0x22 e OBD 09). Mantém o carro em READY ou a carregar durante leituras
+        longas para não descarregar a bateria de 12 V.</p>
+      <p class="hint" id="caps"></p>
+    </div>
+  </section>
+</main>
+
+<script>
+const DATA = {"PROFILES": {"hkmc": {"desc": "Hyundai/Kia — E-GMP (EV6, EV9, Ioniq 5/6, GV60) e Kona EV/e-Niro; BMS 0x7E4 -> 0x7EC, 11 bit", "tx": "7E4", "rx": "7EC", "nominal": null}, "meb": {"desc": "VW Group MEB — ID.3/ID.4/ID.5/ID.Buzz, Enyaq, Born, Q4 e-tron; BMS 0x8C: 0x17FC007B -> 0x17FE007B, 29 bit", "tx": "17FC007B", "rx": "17FE007B", "nominal": null}, "egolf": {"desc": "VW e-Golf (2017+) — BMS 0x8C: 0x7E5 -> 0x7ED, 11 bit", "tx": "7E5", "rx": "7ED", "nominal": 35.8}, "ecmp": {"desc": "Stellantis e-CMP — Peugeot e-208/e-2008, Opel Corsa-e/Mokka-e, Citroën ë-C4, DS3 E-Tense; BMS 0x6B4 -> 0x694, 11 bit (atenção: CAN de diagnóstico nos pinos 3/8)", "tx": "6B4", "rx": "694", "nominal": null}, "cmfev": {"desc": "Renault CMF-EV — Megane/Scenic E-Tech; bateria 29 bit 0x18DADBF1 -> 0x18DAF1DB (sem DIDs públicos com fórmula: só deteção/exploração)", "tx": "18DADBF1", "rx": "18DAF1DB", "nominal": null}, "zoe2": {"desc": "Renault Zoe Fase 2 (ZE40/ZE50, 2019+) — EVC 29 bit 0x18DADAF1 -> 0x18DAF1DA", "tx": "18DADAF1", "rx": "18DAF1DA", "nominal": null}, "byd": {"desc": "BYD (Atto 3, Dolphin, Seal…) — BMS 0x7E7 -> 0x7EF, 11 bit", "tx": "7E7", "rx": "7EF", "nominal": null}, "saic": {"desc": "MG5 / ZS EV 2021+ — BMS 0x7E5 -> 0x7ED, 11 bit", "tx": "7E5", "rx": "7ED", "nominal": null}, "mg4": {"desc": "MG4 — o gateway só deixa passar pedidos funcionais (0x7DF); BMS responde em 0x7ED, 11 bit", "tx": "7DF", "rx": "7ED", "nominal": null}, "mg781": {"desc": "MG ZS EV 1.ª geração (2019–2020) — BMS 0x781 -> 0x789, 11 bit", "tx": "781", "rx": "789", "nominal": null}, "bmwi3": {"desc": "BMW i3 / Mini Cooper SE — SME (ECU 0x07) via 0x6F1 -> 0x607, 11 bit, endereçamento estendido", "tx": "6F1:07", "rx": "607", "nominal": null}, "fordge1": {"desc": "Ford Mustang Mach-E (GE1) — BECM 0x7E4 -> 0x7EC, 11 bit", "tx": "7E4", "rx": "7EC", "nominal": null}, "mbmfa2": {"desc": "Mercedes EQA/EQB (MFA2) — 0x7E5 -> 0x7ED, 11 bit (só SOC publicado; EQE/EQS bloqueados)", "tx": "7E5", "rx": "7ED", "nominal": null}, "fiat500e": {"desc": "Fiat 500e (2020+) — BMS 29 bit 0x18DA44F1 -> 0x18DAF144", "tx": "18DA44F1", "rx": "18DAF144", "nominal": null}}, "ALIASES": {"ev6": "hkmc", "ev9": "hkmc", "ioniq5": "hkmc", "ioniq6": "hkmc", "gv60": "hkmc", "kona": "hkmc", "eniro": "hkmc", "niro": "hkmc", "id3": "meb", "id4": "meb", "id5": "meb", "idbuzz": "meb", "enyaq": "meb", "born": "meb", "q4": "meb", "e208": "ecmp", "e2008": "ecmp", "corsae": "ecmp", "mokkae": "ecmp", "ec4": "ecmp", "ds3": "ecmp", "megane": "cmfev", "scenic": "cmfev", "zoe": "zoe2", "atto3": "byd", "dolphin": "byd", "seal": "byd", "mg5": "saic", "zs": "saic", "zs1": "mg781", "mgzs1": "mg781", "500e": "fiat500e", "i3": "bmwi3", "bmw": "bmwi3", "minise": "bmwi3", "mache": "fordge1", "mustang": "fordge1", "eqa": "mbmfa2", "eqb": "mbmfa2", "mercedes": "mbmfa2"}, "KNOWN": {"hkmc": [{"req": "220101", "tx": "7E4", "rx": "7EC", "src": "Ioniq 5 (verif.) / Kona-Niro", "fields": [{"name": "soc_bms", "idx": 7, "len": 1, "scale": 0.5, "unit": "%", "signed": false, "offset": 0.0, "conf": "V", "enum": null, "endian": "big", "invalid": null}, {"name": "bat_current", "idx": 13, "len": 2, "scale": 0.1, "unit": "A", "signed": true, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "bat_voltage", "idx": 15, "len": 2, "scale": 0.1, "unit": "V", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "cell_v_max", "idx": 26, "len": 1, "scale": 0.02, "unit": "V", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "cell_v_max_no", "idx": 27, "len": 1, "scale": 1, "unit": "", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "cell_v_min", "idx": 28, "len": 1, "scale": 0.02, "unit": "V", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "cell_v_min_no", "idx": 29, "len": 1, "scale": 1, "unit": "", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "aux_12v", "idx": 32, "len": 1, "scale": 0.1, "unit": "V", "signed": false, "offset": 0.0, "conf": "V", "enum": null, "endian": "big", "invalid": null}, {"name": "operating_time", "idx": 49, "len": 4, "scale": 0.0002777777777777778, "unit": "h", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "isolation_res", "idx": 60, "len": 2, "scale": 1, "unit": "kΩ", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "220105", "tx": "7E4", "rx": "7EC", "src": "Ioniq 5 (verif.) / Kona-Niro", "fields": [{"name": "cell_v_deviation", "idx": 23, "len": 1, "scale": 0.02, "unit": "V", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "soh", "idx": 28, "len": 2, "scale": 0.1, "unit": "%", "signed": false, "offset": 0.0, "conf": "V", "enum": null, "endian": "big", "invalid": null}, {"name": "max_det_cell_no", "idx": 30, "len": 1, "scale": 1, "unit": "", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "min_deterioration", "idx": 31, "len": 2, "scale": 0.1, "unit": "%", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "min_det_cell_no", "idx": 33, "len": 1, "scale": 1, "unit": "", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "soc_display", "idx": 34, "len": 1, "scale": 0.5, "unit": "%", "signed": false, "offset": 0.0, "conf": "V", "enum": null, "endian": "big", "invalid": null}]}], "meb": [{"req": "22028C", "tx": "17FC007B", "rx": "17FE007B", "src": "ID.3 (evDash, meinid; confirmado ID.3 58 kWh)", "fields": [{"name": "soc_bms", "idx": 3, "len": 1, "scale": 0.4, "unit": "%", "signed": false, "offset": 0.0, "conf": "V", "enum": null, "endian": "big", "invalid": null}, {"name": "soc_display", "idx": 3, "len": 1, "scale": 0.4425, "unit": "%", "signed": false, "offset": -6.1947, "conf": "V", "enum": null, "endian": "big", "invalid": null}]}, {"req": "221E3B", "tx": "17FC007B", "rx": "17FE007B", "src": "ID.3 (evDash, meinid)", "fields": [{"name": "bat_voltage", "idx": 3, "len": 2, "scale": 0.25, "unit": "V", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "221E3D", "tx": "17FC007B", "rx": "17FE007B", "src": "ID.3 (evDash, meinid)", "fields": [{"name": "bat_current", "idx": 3, "len": 4, "scale": 0.01, "unit": "A", "signed": false, "offset": -1500.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "227448", "tx": "17FC007B", "rx": "17FE007B", "src": "ID.3 (meinid)", "fields": [{"name": "charging_status", "idx": 3, "len": 1, "scale": 1, "unit": "", "signed": false, "offset": 0.0, "conf": "C", "enum": {"0": "standby", "1": "condução", "4": "carga AC", "6": "carga DC"}, "endian": "big", "invalid": null}]}, {"req": "22F40D", "tx": "17FC007B", "rx": "17FE007B", "src": "ID.3 (evDash)", "fields": [{"name": "speed", "idx": 3, "len": 1, "scale": 1, "unit": "km/h", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": 255}]}, {"req": "22295A", "tx": "17FC0076", "rx": "17FE0076", "src": "ID.3 (evDash; confirmado no painel)", "fields": [{"name": "odometer", "idx": 3, "len": 3, "scale": 1, "unit": "km", "signed": false, "offset": 0.0, "conf": "V", "enum": null, "endian": "big", "invalid": null}]}, {"req": "22210E", "tx": "17FC0076", "rx": "17FE0076", "src": "ID.3 (meinid, evDash)", "fields": [{"name": "drive_mode", "idx": 4, "len": 1, "scale": 1, "unit": "", "signed": false, "offset": 0.0, "conf": "C", "enum": {"8": "P", "5": "D", "12": "B"}, "endian": "big", "invalid": null}]}, {"req": "222AB2", "tx": "710", "rx": "77A", "src": "ID.3 58 kWh (teste) / ID.4 (cellpulse)", "fields": [{"name": "energy_max", "idx": 3, "len": 2, "scale": 0.05, "unit": "kWh", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "aab2_word2_raw", "idx": 5, "len": 2, "scale": 1, "unit": "", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}], "egolf": [{"req": "22028C", "tx": "7E5", "rx": "7ED", "src": "e-Golf (EVNotify, egolf-battery-report)", "fields": [{"name": "soc_bms", "idx": 3, "len": 1, "scale": 0.4, "unit": "%", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "221E3B", "tx": "7E5", "rx": "7ED", "src": "e-Golf (EVNotify, egolf-battery-report)", "fields": [{"name": "bat_voltage", "idx": 3, "len": 2, "scale": 0.25, "unit": "V", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "221E3D", "tx": "7E5", "rx": "7ED", "src": "e-Golf (EVNotify, egolf-battery-report)", "fields": [{"name": "bat_current", "idx": 3, "len": 4, "scale": 0.01, "unit": "A", "signed": false, "offset": -1500.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "222AB2", "tx": "710", "rx": "77A", "src": "e-Golf (egolf-battery-report)", "fields": [{"name": "energy_max", "idx": 3, "len": 2, "scale": 0.002, "unit": "kWh", "signed": false, "offset": 0.0, "conf": "V", "enum": null, "endian": "big", "invalid": null}]}], "ecmp": [{"req": "22D410", "tx": "6B4", "rx": "694", "src": "Mokka-e / ë-C4 2023 (EscoEvObdScanner)", "fields": [{"name": "soc_bms", "idx": 3, "len": 2, "scale": 0.001953125, "unit": "%", "signed": false, "offset": 0.0, "conf": "V", "enum": null, "endian": "big", "invalid": null}]}, {"req": "22D860", "tx": "6B4", "rx": "694", "src": "Mokka-e 2023 (OBDb #74), e-208 (ESPHome)", "fields": [{"name": "soh", "idx": 4, "len": 2, "scale": 0.0625, "unit": "%", "signed": false, "offset": 0.0, "conf": "V", "enum": null, "endian": "big", "invalid": null}]}, {"req": "22D815", "tx": "6B4", "rx": "694", "src": "e-208 (ESPHome ble_elm327)", "fields": [{"name": "bat_voltage", "idx": 3, "len": 2, "scale": 0.0625, "unit": "V", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "22D42E", "tx": "6B4", "rx": "694", "src": "EscoEvObdScanner", "fields": [{"name": "energy_charged_total", "idx": 3, "len": 4, "scale": 0.0625, "unit": "kWh", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "energy_discharged_total", "idx": 7, "len": 4, "scale": 0.0625, "unit": "kWh", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}], "cmfev": [], "zoe2": [{"req": "222002", "tx": "18DADAF1", "rx": "18DAF1DA", "src": "Zoe (ABRP zoe.json, fórum ABRP)", "fields": [{"name": "soc", "idx": 3, "len": 2, "scale": 0.02, "unit": "%", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "223204", "tx": "18DADAF1", "rx": "18DAF1DA", "src": "Zoe (ABRP, fórum ABRP)", "fields": [{"name": "bat_current", "idx": 3, "len": 2, "scale": 0.25, "unit": "A", "signed": false, "offset": -8192.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "223206", "tx": "18DADAF1", "rx": "18DAF1DA", "src": "Zoe (ABRP, fórum ABRP)", "fields": [{"name": "soh", "idx": 3, "len": 2, "scale": 1, "unit": "%", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "229012", "tx": "18DADAF1", "rx": "18DAF1DA", "src": "Zoe (ABRP, fórum ABRP)", "fields": [{"name": "bat_temp", "idx": 3, "len": 2, "scale": 0.0625, "unit": "°C", "signed": false, "offset": -640.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}], "byd": [{"req": "221FFC", "tx": "7E7", "rx": "7EF", "src": "BYD Atto 3/Dolphin (ABRP verified)", "fields": [{"name": "soc", "idx": 3, "len": 2, "scale": 0.01, "unit": "%", "signed": false, "offset": 0.0, "conf": "V", "enum": null, "endian": "little", "invalid": null}]}, {"req": "220008", "tx": "7E7", "rx": "7EF", "src": "BYD Atto 3/Dolphin (ABRP verified)", "fields": [{"name": "bat_voltage", "idx": 3, "len": 2, "scale": 1, "unit": "V", "signed": false, "offset": 0.0, "conf": "V", "enum": null, "endian": "little", "invalid": null}]}, {"req": "220009", "tx": "7E7", "rx": "7EF", "src": "BYD Atto 3/Dolphin (ABRP verified)", "fields": [{"name": "bat_current", "idx": 3, "len": 2, "scale": 0.1, "unit": "A", "signed": false, "offset": -500.0, "conf": "V", "enum": null, "endian": "little", "invalid": null}]}, {"req": "220032", "tx": "7E7", "rx": "7EF", "src": "BYD Atto 3/Dolphin (ABRP verified)", "fields": [{"name": "bat_temp", "idx": 3, "len": 1, "scale": 1, "unit": "°C", "signed": false, "offset": -40.0, "conf": "V", "enum": null, "endian": "big", "invalid": null}]}], "saic": [{"req": "22B061", "tx": "7E5", "rx": "7ED", "src": "MG5 (mgevs.com, perfil ABRP LiamWhales)", "fields": [{"name": "soh", "idx": 3, "len": 2, "scale": 0.01, "unit": "%", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "22B046", "tx": "7E5", "rx": "7ED", "src": "MG5 (mgevs.com)", "fields": [{"name": "soc_mg5", "idx": 3, "len": 2, "scale": 0.1075268817204301, "unit": "%", "signed": false, "offset": -4.301075268817204, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}], "mg4": [{"req": "22B061", "tx": "7DF", "rx": "7ED", "src": "MG4 2023 (teste: 24 F4 -> 94,60 %)", "fields": [{"name": "soh", "idx": 3, "len": 2, "scale": 0.01, "unit": "%", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "015B", "tx": "7DF", "rx": "7ED", "src": "MG4 2023 (OBD normal: 5B -> 35,7 %, painel 36 %)", "fields": [{"name": "soc", "idx": 2, "len": 1, "scale": 0.39215686274509803, "unit": "%", "signed": false, "offset": 0.0, "conf": "V", "enum": null, "endian": "big", "invalid": null}]}, {"req": "22B042", "tx": "7DF", "rx": "7ED", "src": "MG5/ZS (perfil ABRP) — por testar no MG4", "fields": [{"name": "bat_voltage", "idx": 3, "len": 2, "scale": 0.25, "unit": "V", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "22B043", "tx": "7DF", "rx": "7ED", "src": "MG4 (RealDash) — por testar via 7DF", "fields": [{"name": "bat_current", "idx": 3, "len": 2, "scale": 0.025, "unit": "A", "signed": false, "offset": -1000.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}], "mg781": [{"req": "22B061", "tx": "781", "rx": "789", "src": "MG4 (RealDash) / ZS mk1 (captura mgevs)", "fields": [{"name": "soh", "idx": 3, "len": 2, "scale": 0.01, "unit": "%", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "22B042", "tx": "781", "rx": "789", "src": "ZS mk1 (captura: 1654/4 = 413,5 V)", "fields": [{"name": "bat_voltage", "idx": 3, "len": 2, "scale": 0.25, "unit": "V", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "22B043", "tx": "781", "rx": "789", "src": "MG4 (RealDash)", "fields": [{"name": "bat_current", "idx": 3, "len": 2, "scale": 0.025, "unit": "A", "signed": false, "offset": -1000.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "22B701", "tx": "7E3", "rx": "7EB", "src": "MG4 (RealDash, VCU 0x7E3)", "fields": [{"name": "soc", "idx": 3, "len": 2, "scale": 0.1, "unit": "%", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "22B046", "tx": "781", "rx": "789", "src": "ZS mk1 (captura mgevs)", "fields": [{"name": "soc_bms", "idx": 3, "len": 2, "scale": 0.1, "unit": "%", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}], "fiat500e": [{"req": "22A010", "tx": "18DA44F1", "rx": "18DAF144", "src": "Fiat 500e (gist MrPoofy / ABRP)", "fields": [{"name": "soc", "idx": 5, "len": 1, "scale": 0.39215686274509803, "unit": "%", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}, {"req": "22A029", "tx": "18DA44F1", "rx": "18DAF144", "src": "Fiat 500e (gist MrPoofy; correção ABRP)", "fields": [{"name": "ah_total", "idx": 6, "len": 2, "scale": 0.1, "unit": "Ah", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}, {"name": "ah_residual", "idx": 8, "len": 2, "scale": 0.1, "unit": "Ah", "signed": false, "offset": 0.0, "conf": "C", "enum": null, "endian": "big", "invalid": null}]}]}, "DETECT": [["hkmc", "7E4", "7EC", "220101", false], ["meb", "17FC007B", "17FE007B", "22028C", false], ["egolf", "7E5", "7ED", "22028C", false], ["ecmp", "6B4", "694", "22D410", false], ["byd", "7E7", "7EF", "221FFC", false], ["saic", "7E5", "7ED", "22B061", false], ["mg781", "781", "789", "22B061", false], ["mg4", "7DF", "7ED", "22B061", false], ["zoe2", "18DADAF1", "18DAF1DA", "222002", false], ["fiat500e", "18DA44F1", "18DAF144", "22A010", false], ["fordge1", "7E4", "7EC", "224801", false], ["bmwi3", "6F1:07", "607", "22DDBC", false], ["mbmfa2", "7E5", "7ED", "226050", false], ["cmfev", "18DADBF1", "18DAF1DB", "22F190", true]], "WMI": {"KNA": "Kia", "KNC": "Kia", "KNE": "Kia (Europa)", "U5Y": "Kia (Eslováquia)", "KMH": "Hyundai", "KM8": "Hyundai", "TMA": "Hyundai (Rep. Checa)", "KMT": "Genesis", "WVW": "Volkswagen", "WVG": "Volkswagen (SUV)", "WV2": "Volkswagen (comercial)", "WAU": "Audi", "TMB": "Škoda", "VSS": "SEAT/Cupra", "VR3": "Peugeot", "VF3": "Peugeot", "VR7": "Citroën", "VF7": "Citroën", "VXK": "Opel (PSA)", "W0V": "Opel", "VR1": "DS", "VF1": "Renault", "VF6": "Renault (comercial)", "UU1": "Dacia", "WBY": "BMW i", "WBA": "BMW", "WMW": "Mini", "W1K": "Mercedes-Benz", "W1N": "Mercedes-Benz (SUV)", "WDD": "Mercedes-Benz", "3FM": "Ford (México)", "LGX": "BYD", "LC0": "BYD", "LSJ": "MG (SAIC)", "SDP": "MG (SAIC)", "ZFA": "Fiat", "3C3": "Fiat", "5YJ": "Tesla", "7SA": "Tesla", "LRW": "Tesla (China)", "XP7": "Tesla (Alemanha)"}, "VW_MODEL": {"E1": "ID.3", "E2": "ID.4/ID.5", "EB": "ID.Buzz", "AU": "Golf 7 (e-Golf?)"}, "STD_DIDS": {"F186": "Sessão de diagnóstico ativa", "F187": "Part number (fabricante)", "F188": "SW number ECU (fabricante)", "F189": "Versão SW ECU (fabricante)", "F18A": "ID do fornecedor", "F18B": "Data de fabrico ECU", "F18C": "N.º de série ECU", "F190": "VIN", "F191": "HW number ECU (fabricante)", "F192": "HW number (fornecedor)", "F193": "Versão HW (fornecedor)", "F194": "SW number (fornecedor)", "F195": "Versão SW (fornecedor)", "F197": "Nome do sistema / motor"}, "SOH_SOURCES": {"hkmc": ["220105"], "meb": ["222AB2"], "egolf": ["222AB2"], "ecmp": ["22D860"], "zoe2": ["223206"], "saic": ["22B061"], "mg781": ["22B061"], "mg4": ["22B061"], "fiat500e": ["22A029"], "bmwi3": ["226335"], "fordge1": ["224848"]}};
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ------------------------------------------------------------------ log
+const LOG = [];
+function log(s){ const o=$("logOut"); o.textContent += s + "\n"; if (o.textContent.length > 60000) o.textContent = o.textContent.slice(-40000); o.scrollTop = o.scrollHeight; }
+function status(s, cls){ const e=$("status"); e.textContent = s; e.className = cls||""; }
+
+// ------------------------------------------------------------ transporte
+class Transport {
+  constructor(){ this.buf = ""; this.waiters = []; }
+  feed(txt){ this.buf += txt; this._check(); }
+  _check(){ while (this.waiters.length && this.buf.includes(">")) {
+      const i = this.buf.indexOf(">"); const chunk = this.buf.slice(0, i); this.buf = this.buf.slice(i+1);
+      this.waiters.shift().resolve(chunk); } }
+  waitPrompt(ms){ return new Promise((resolve, reject) => {
+      const w = {resolve: v => { clearTimeout(t); resolve(v); }};
+      const t = setTimeout(() => { const k = this.waiters.indexOf(w); if (k>=0) this.waiters.splice(k,1);
+          reject(new Error("timeout")); }, ms);
+      this.waiters.push(w); this._check(); }); }
+}
+
+const BLE_SERVICES = [0xFFE0, 0xFFF0, 0x18F0, 0xFFE5, 0xBEEF,
+  "e7810a71-73ae-499d-8c15-faa9aef0c3f2", "0000fff0-0000-1000-8000-00805f9b34fb"];
+
+class BleTransport extends Transport {
+  async open(){
+    this.dev = await navigator.bluetooth.requestDevice({acceptAllDevices: true, optionalServices: BLE_SERVICES});
+    this.dev.addEventListener("gattserverdisconnected", () => onDisconnected());
+    const gatt = await this.dev.gatt.connect();
+    const services = await gatt.getPrimaryServices();
+    for (const s of services) {
+      let chars; try { chars = await s.getCharacteristics(); } catch(e) { continue; }
+      const n = chars.find(c => c.properties.notify || c.properties.indicate);
+      const w = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+      if (n && w) { this.rx = n; this.tx = w; break; }
+    }
+    if (!this.tx) throw new Error("serviço série BLE não encontrado neste adaptador");
+    await this.rx.startNotifications();
+    const dec = new TextDecoder();
+    this.rx.addEventListener("characteristicvaluechanged", e => this.feed(dec.decode(e.target.value)));
+    return this.dev.name || "BLE";
+  }
+  async write(s){
+    const b = new TextEncoder().encode(s);
+    for (let i = 0; i < b.length; i += 20) {
+      const part = b.slice(i, i+20);
+      if (this.tx.properties.writeWithoutResponse) await this.tx.writeValueWithoutResponse(part);
+      else await this.tx.writeValueWithResponse(part);
+    }
+  }
+  async close(){ try { this.dev.gatt.disconnect(); } catch(e){} }
+}
+
+class SerialTransport extends Transport {
+  async open(){
+    this.port = await navigator.serial.requestPort({allowedBluetoothServiceClassIds:
+      ["00001101-0000-1000-8000-00805f9b34fb"]});
+    await this.port.open({baudRate: 38400});
+    this.writer = this.port.writable.getWriter();
+    this.reading = true;
+    (async () => { const dec = new TextDecoder();
+      while (this.reading && this.port.readable) {
+        const r = this.port.readable.getReader(); this.reader = r;
+        try { while (true) { const {value, done} = await r.read(); if (done) break; this.feed(dec.decode(value)); } }
+        catch(e) { break; } finally { r.releaseLock(); }
+      } onDisconnected(); })();
+    return "Serial/SPP";
+  }
+  async write(s){ await this.writer.write(new TextEncoder().encode(s)); }
+  async close(){ this.reading = false; try { await this.reader.cancel(); } catch(e){}
+    try { this.writer.releaseLock(); } catch(e){} try { await this.port.close(); } catch(e){} }
+}
+
+// ------------------------------------------------------------------ ELM327
+const ELM_ERR = ["NO DATA","CAN ERROR","BUFFER FULL","BUS ERROR","BUS BUSY","DATA ERROR","FB ERROR",
+                 "LV RESET","STOPPED","UNABLE TO CONNECT","ERR","?"];
+const HEX = /^[0-9A-F]+$/;
+class ElmError extends Error {}
+
+class Elm {
+  constructor(t){ this.t = t; this.current = null; this.cea = null; this.ext = false; this.lock = Promise.resolve(); }
+  async cmd(c, ms=4000){
+    const run = async () => {
+      this.t.buf = "";
+      const p = this.t.waitPrompt(ms);
+      await this.t.write(c + "\r");
+      let txt;
+      try { txt = await p; } catch(e) { throw new ElmError(`timeout em '${c}'`); }
+      const lines = txt.split(/[\r\n]+/).map(s => s.trim()).filter(Boolean)
+        .filter(l => l.toUpperCase() !== c.toUpperCase() && !l.toUpperCase().startsWith("SEARCHING"));
+      return lines;
+    };
+    const r = this.lock.then(run, run); this.lock = r.catch(()=>{}); return r;
+  }
+  async init(){
+    const v = (await this.cmd("ATZ", 6000)).join(" ");
+    log("Adaptador: " + v);
+    await sleep(300);
+    for (const c of ["ATE0","ATL0","ATS0","ATH1","ATCAF1","ATAT1","ATST96"]) {
+      const r = (await this.cmd(c)).join(" ");
+      if (!r.toUpperCase().includes("OK")) log(`aviso: ${c} -> ${r}`);
+    }
+    try { log("Tensão OBD: " + (await this.cmd("ATRV")).join(" ")); } catch(e){}
+    return v;
+  }
+  async setTarget(tx, rx){
+    tx = tx.toUpperCase(); rx = rx.toUpperCase();
+    const [txid, cea=""] = tx.split(":");
+    if (txid.length !== rx.length || ![3,8].includes(txid.length)) throw new ElmError("TX/RX inválidos");
+    const tgt = {tx, rx, idLen: rx.length, ext: !!cea};
+    if (this.current === tx + "|" + rx) return tgt;
+    const cmds = [];
+    if (this.cea && !cea) cmds.push("ATCEA");
+    const functional = txid === "7DF" || txid === "18DB33F1";
+    if (functional) {   // pedido funcional (MG4): FC automático para o ID físico
+      if (txid.length === 3) cmds.push("ATSP6", "ATSH7DF"); else cmds.push("ATSP7", "ATCP18", "ATSHDB33F1");
+      cmds.push("ATCRA"+rx, "ATFCSM0");
+    } else {
+      if (txid.length === 3) cmds.push("ATSP6", "ATSH"+txid, "ATCRA"+rx, "ATFCSH"+txid);
+      else cmds.push("ATSP7", "ATCP"+txid.slice(0,2), "ATSH"+txid.slice(2), "ATCRA"+rx, "ATFCSH"+txid);
+      if (cea) cmds.push("ATCEA"+cea, "ATFCSD"+cea+"300000"); else cmds.push("ATFCSD300000");
+      cmds.push("ATFCSM1");
+    }
+    for (const c of cmds) { const r = (await this.cmd(c)).join(" ");
+      if (!r.toUpperCase().includes("OK")) log(`aviso: ${c} -> ${r}`); }
+    this.cea = cea || null; this.ext = !!cea; this.current = tx + "|" + rx;
+    return tgt;
+  }
+  async request(req, rx, idLen){
+    req = req.replace(/\s/g, "").toUpperCase();
+    let lines = await this.cmd(req, 6000);
+    const j = lines.join(" ").toUpperCase();
+    for (const e of ELM_ERR) if (j === e || j.startsWith(e)) throw new ElmError(`${req}: ${j}`);
+    for (let k = 0; k < 10; k++) {
+      const msgs = reassemble(lines, rx, idLen, this.ext);
+      const fin = msgs.filter(m => !(m.length >= 3 && m[0] === 0x7F && m[2] === 0x78));
+      if (fin.length) return fin[fin.length - 1];
+      try { const more = await this.t.waitPrompt(3000);
+        lines = more.split(/[\r\n]+/).map(s => s.trim()).filter(Boolean); }
+      catch(e) { break; }
+    }
+    throw new ElmError(`${req}: sem resposta final`);
+  }
+}
+
+function reassemble(lines, rx, idLen, ext){
+  rx = rx ? rx.toUpperCase() : null;
+  const msgs = []; let pl = null, exp = null, seq = 1;
+  for (let ln of lines) {
+    ln = ln.replace(/\s/g, "").toUpperCase();
+    if (!HEX.test(ln) || ln.length <= idLen) continue;
+    const cid = ln.slice(0, idLen); let data = ln.slice(idLen);
+    if (rx && cid !== rx) continue;
+    if (ext) data = data.slice(2);
+    if (data.length % 2) data = data.slice(0, -1);
+    const f = []; for (let i = 0; i < data.length; i += 2) f.push(parseInt(data.substr(i, 2), 16));
+    if (!f.length) continue;
+    const pci = f[0] >> 4;
+    if (pci === 0) { msgs.push(f.slice(1, 1 + (f[0] & 15))); pl = exp = null; }
+    else if (pci === 1) { exp = ((f[0] & 15) << 8) | f[1]; pl = f.slice(2); seq = 1; }
+    else if (pci === 2 && exp !== null) {
+      if ((f[0] & 15) !== (seq & 15)) throw new ElmError("sequência ISO-TP inválida");
+      pl.push(...f.slice(1)); seq++;
+      if (pl.length >= exp) { msgs.push(pl.slice(0, exp)); pl = exp = null; }
+    }
+  }
+  if (exp !== null) throw new ElmError(`mensagem incompleta ${pl.length}/${exp}`);
+  return msgs;
+}
+
+const NRC = {0x10:"generalReject",0x11:"serviceNotSupported",0x12:"subFunctionNotSupported",
+  0x13:"incorrectMessageLength",0x22:"conditionsNotCorrect",0x31:"requestOutOfRange",0x33:"securityAccessDenied",
+  0x7F:"serviceNotSupportedInSession"};
+function checkPositive(req, p){
+  const r = hexBytes(req);
+  if (p[0] === 0x7F) { const c = p[2]||0; throw new ElmError(`${req}: NRC 0x${h2(c)} (${NRC[c]||"?"})`); }
+  if (p[0] !== r[0] + 0x40) throw new ElmError(`${req}: SID inesperado 0x${h2(p[0])}`);
+  if (r[0] === 0x22 && (p[1] !== r[1] || p[2] !== r[2])) throw new ElmError(`${req}: DID não coincide`);
+}
+const h2 = b => b.toString(16).toUpperCase().padStart(2, "0");
+const hexBytes = s => s.match(/../g).map(x => parseInt(x, 16));
+const toHex = a => a.map(h2).join("");
+const ascii = a => a.map(b => b >= 32 && b < 127 ? String.fromCharCode(b) : ".").join("");
+
+function fieldsFor(fam, req){ const e = (DATA.KNOWN[fam]||[]).find(e => e.req === req); return e ? e.fields : []; }
+function knownEntry(fam, req){ return (DATA.KNOWN[fam]||[]).find(e => e.req === req); }
+
+function decode(fam, req, p){
+  const out = {};
+  for (const f of fieldsFor(fam, req)) {
+    if (f.idx + f.len > p.length) { out[f.name] = null; continue; }
+    let bytes = p.slice(f.idx, f.idx + f.len); if (f.endian === "little") bytes = bytes.slice().reverse();
+    let raw = bytes.reduce((a, b) => a * 256 + b, 0);
+    if (f.signed && raw >= 2 ** (8 * f.len - 1)) raw -= 2 ** (8 * f.len);
+    if (f.invalid !== null && f.invalid !== undefined && raw === f.invalid) { out[f.name] = null; continue; }
+    out[f.name] = f.enum ? (f.enum[raw] ?? ("0x" + raw.toString(16))) : raw * f.scale + (f.offset || 0);
+  }
+  return out;
+}
+function derive(v, nominal){
+  const o = {};
+  if (typeof v.bat_voltage === "number" && typeof v.bat_current === "number") o.bat_power_kw = v.bat_voltage * v.bat_current / 1000;
+  if (typeof v.ah_total === "number" && typeof v.ah_residual === "number" && v.ah_total > 0) o.soh_from_ah = 100 * v.ah_residual / v.ah_total;
+  if (typeof v.energy_max === "number" && nominal) o.soh_from_energy = 100 * v.energy_max / nominal;
+  return o;
+}
+
+// ----------------------------------------------------------- deteção / VIN
+const YEAR = {}; "ABCDEFGHJKLMNPRSTVWXY".split("").forEach((c, i) => YEAR[c] = 2010 + i);
+function decodeVin(vin){
+  if (!vin) return null;
+  const i = {vin, brand: DATA.WMI[vin.slice(0,3)] || ("WMI " + vin.slice(0,3))};
+  if (["WVW","WVG","WAU","TMB","VSS"].includes(vin.slice(0,3))) i.model = DATA.VW_MODEL[vin.slice(6,8)] || "";
+  if (YEAR[vin[9]]) i.year = YEAR[vin[9]];
+  return i;
+}
+function vinFrom(p, skip){ const m = ascii(p.slice(skip)).match(/[A-HJ-NPR-Z0-9]{17}/); return m ? m[0] : null; }
+
+async function readVin(tx, rx){
+  if (tx && rx) { try { const t = await elm.setTarget(tx, rx);
+      const p = await elm.request("22F190", t.rx, t.idLen);
+      if (p[0] === 0x62 && p[1] === 0xF1 && p[2] === 0x90) { const v = vinFrom(p, 3); if (v) return v; } } catch(e){} }
+  try {
+    const cmds = ["ATSP6","ATSH7DF","ATAR","ATFCSM0"]; if (elm.cea) { cmds.unshift("ATCEA"); elm.cea = null; elm.ext = false; }
+    for (const c of cmds) await elm.cmd(c);
+    elm.current = null;
+    const lines = await elm.cmd("0902", 6000);
+    const ids = lines.map(l => l.replace(/\s/g,"")).filter(l => HEX.test(l) && l.length > 3).map(l => l.slice(0,3));
+    if (ids.length) for (const p of reassemble(lines, ids[0], 3, false))
+      if (p[0] === 0x49 && p[1] === 0x02) return vinFrom(p, 3);
+  } catch(e){}
+  return null;
+}
+
+async function detect(){
+  log("Deteção automática:");
+  try { await elm.cmd("ATST32"); return await _detect(); } finally { try { await elm.cmd("ATST96"); } catch(e){} }
+}
+async function _detect(){
+  for (const [fam, tx, rx, req, any] of DATA.DETECT) {
+    try {
+      const t = await elm.setTarget(tx, rx);
+      const p = await elm.request(req, t.rx, t.idLen);
+      if (!(any && p[0] === 0x7F)) checkPositive(req, p);
+    } catch(e) { log(`  ${fam}: não (${String(e.message).split(": ").pop()})`); continue; }
+    log(`  ${fam}: SIM`);
+    const info = decodeVin(await readVin(tx, rx));
+    await elm.setTarget(DATA.PROFILES[fam].tx, DATA.PROFILES[fam].rx);
+    if (info) log(`  VIN ${info.vin} (${[info.brand, info.model, info.year].filter(Boolean).join(" · ")})`);
+    return {fam, info};
+  }
+  log("  Nenhuma família reconhecida — usa o separador DID.");
+  return {fam: null, info: null};
+}
+
+// ------------------------------------------------------------------ estado
+let elm = null, transport = null, fam = null, looping = false, busy = false;
+const CSV = [["timestamp","car","request","status","payload_hex","decoded_json"]];
+
+function famSel(){ const v = $("car").value; return v === "auto" ? fam : (DATA.ALIASES[v] || v); }
+function setConnected(on){
+  $("btnOff").disabled = !on; $("btnBle").disabled = on; $("btnSer").disabled = on || !("serial" in navigator);
+}
+function onDisconnected(){ if (!elm) return; elm = null; looping = false; setConnected(false);
+  status("Desligado (ligação perdida)"); $("btnLoop").textContent = "▶ Ciclo"; }
+
+async function connect(kind){
+  try {
+    transport = kind === "ble" ? new BleTransport() : new SerialTransport();
+    status("A ligar…");
+    const name = await transport.open();
+    elm = new Elm(transport);
+    setConnected(true);
+    await elm.init();
+    const sel = $("car").value;
+    if (sel === "auto") { const r = await detect(); fam = r.fam;
+      if (fam) { $("car").value = fam; status(`Ligado: ${name} · ${fam}` + (r.info ? ` · ${r.info.brand} ${r.info.model||""}` : "")); }
+      else status(`Ligado: ${name} · veículo não detetado`);
+    } else { fam = DATA.ALIASES[sel] || sel; const p = DATA.PROFILES[fam];
+      await elm.setTarget(p.tx, p.rx); status(`Ligado: ${name} · ${fam}`); }
+    if (fam && !$("nominal").value) { let n = null; try { n = localStorage.getItem("nominal_" + fam); } catch(e){}
+      n = n || DATA.PROFILES[fam].nominal; if (n) $("nominal").value = n; }
+  } catch(e) {
+    log("ERRO: " + e.message); status("Falhou: " + e.message);
+    try { await transport.close(); } catch(_){} elm = null; setConnected(false);
+  }
+}
+
+// ------------------------------------------------------------- ao vivo
+function fmt(v, f){ if (v === null || v === undefined) return "—"; if (typeof v !== "number") return String(v);
+  if (f && f.scale === 1 && !f.offset) return String(Math.round(v)); return (Math.round(v * 1000) / 1000).toString(); }
+function setRow(key, did, name, val, unit, conf){
+  let tr = document.querySelector(`tr[data-k="${key}"]`);
+  if (!tr) { tr = document.createElement("tr"); tr.dataset.k = key; $("rows").appendChild(tr); }
+  tr.innerHTML = `<td>${did}</td><td>${name}</td><td class="v">${val} <span style="color:var(--mut);font-weight:400">${unit}</span></td><td class="${conf}">●</td>`;
+}
+function setTile(id, v, sub){ $(id).textContent = v === null ? "—" : (Math.round(v * 10) / 10) + " %"; $(id + "S").textContent = sub || " "; }
+
+async function readKnown(){
+  const f = famSel();
+  if (!elm) return alertBox("Liga primeiro ao adaptador.");
+  if (!f || !(DATA.KNOWN[f]||[]).length) { log(`A família '${f}' não tem DIDs com fórmula — usa o separador DID.`); return; }
+  if (busy) return; busy = true;
+  const cycle = {}; const ts = new Date().toISOString();
+  try {
+    for (const e of DATA.KNOWN[f]) {
+      let st = "ok", hex = "", dec = {};
+      try {
+        const t = await elm.setTarget(e.tx, e.rx);
+        let p; try { p = await elm.request(e.req, t.rx, t.idLen); }
+        catch(e1) { if (!String(e1.message).includes("NO DATA")) throw e1; p = await elm.request(e.req, t.rx, t.idLen); }
+        hex = toHex(p);
+        checkPositive(e.req, p); dec = decode(f, e.req, p); Object.assign(cycle, dec);
+        for (const fd of e.fields) setRow(e.req + fd.name, e.req.slice(2), fd.name, fmt(dec[fd.name], fd), fd.unit, fd.conf);
+      } catch(err) { st = err.message; setRow(e.req + "err", e.req.slice(2), "erro", st.split(": ").pop(), "", "E"); }
+      CSV.push([ts, f, e.req, st, hex, JSON.stringify(dec)]);
+    }
+    const nom = parseFloat(($("nominal").value || "").replace(",", ".")) || null;
+    const d = derive(cycle, nom);
+    for (const [k, v] of Object.entries(d)) setRow("der" + k, "—", k, fmt(v), k.endsWith("kw") ? "kW" : "%", "D");
+    if (Object.keys(d).length) CSV.push([ts, f, "derived", "ok", "", JSON.stringify(d)]);
+    const soh = cycle.soh ?? d.soh_from_ah ?? d.soh_from_energy ?? null;
+    setTile("tSoh", soh, cycle.soh != null ? "do BMS" : (soh != null ? "derivado" : ""));
+    const soc = cycle.soc_display ?? cycle.soc ?? cycle.soc_bms ?? null;
+    setTile("tSoc", soc, cycle.soc_display != null ? "painel" : (soc != null ? "BMS" : ""));
+    $("csvN").textContent = (CSV.length - 1) + " linhas";
+  } finally { busy = false; }
+}
+async function loop(){
+  looping = !looping; $("btnLoop").textContent = looping ? "■ Parar" : "▶ Ciclo";
+  while (looping && elm) { await readKnown(); const s = +$("interval").value;
+    for (let i = 0; i < s * 10 && looping; i++) await sleep(100); }
+}
+
+// ------------------------------------------------------------- SOH rápido
+async function quickSoh(){
+  if (!elm) return alertBox("Liga primeiro ao adaptador.");
+  const f = famSel(); const src = f && DATA.SOH_SOURCES[f];
+  if (!src) return setTile("tSoh", null, f ? "sem SOH publicado" : "veículo não detetado");
+  if (busy) return; busy = true;
+  const vals = {};
+  try {
+    for (const req of src) { const e = knownEntry(f, req);
+      const t = await elm.setTarget(e.tx, e.rx); const p = await elm.request(req, t.rx, t.idLen);
+      checkPositive(req, p); Object.assign(vals, decode(f, req, p)); }
+    const nom = parseFloat(($("nominal").value || "").replace(",", ".")) || DATA.PROFILES[f].nominal || null;
+    try { if (nom) localStorage.setItem("nominal_" + f, nom); } catch(e){}
+    const d = derive(vals, nom);
+    if (typeof vals.soh === "number") setTile("tSoh", vals.soh, "do BMS");
+    else if (d.soh_from_ah != null) setTile("tSoh", d.soh_from_ah, `${vals.ah_residual.toFixed(1)} ÷ ${vals.ah_total.toFixed(1)} Ah`);
+    else if (d.soh_from_energy != null) setTile("tSoh", d.soh_from_energy, `${vals.energy_max.toFixed(1)} ÷ ${nom} kWh`);
+    else if (typeof vals.energy_max === "number") setTile("tSoh", null, `${vals.energy_max.toFixed(1)} kWh — indica kWh nominal`);
+    log("SOH rápido: " + JSON.stringify(vals));
+  } catch(e) { setTile("tSoh", null, e.message.split(": ").pop()); log("ERRO: " + e.message); }
+  finally { busy = false; }
+}
+
+// ------------------------------------------------------------------ DID
+function dumpText(p){
+  const l = [`${p.length} bytes (dados a partir de idx 3)`];
+  for (let r = 0; r < p.length; r += 8) { const c = p.slice(r, r + 8);
+    l.push(`[${String(r).padStart(3)}] ${c.map(h2).join(" ").padEnd(23)} | ${c.map(b => String(b).padStart(3)).join(" ")}`); }
+  return l.join("\n");
+}
+function target(req){
+  const tx = $("didTx").value.trim(), rx = $("didRx").value.trim();
+  if (tx && rx) return [tx, rx];
+  const f = famSel(); const k = f && knownEntry(f, req);
+  if (k) return [k.tx, k.rx];
+  const p = DATA.PROFILES[f || "hkmc"]; return [p.tx, p.rx];
+}
+async function readDid(){
+  if (!elm) return alertBox("Liga primeiro ao adaptador.");
+  let d = $("didIn").value.trim().toUpperCase().replace(/^22/, "");
+  if (!/^[0-9A-F]{1,4}$/.test(d)) return alertBox("DID inválido (ex.: 028C).");
+  const req = "22" + d.padStart(4, "0"); const [tx, rx] = target(req);
+  let out = `${req}  TX ${tx} → RX ${rx}\n`;
+  try { const t = await elm.setTarget(tx, rx); const p = await elm.request(req, t.rx, t.idLen);
+    out += dumpText(p) + "\n"; checkPositive(req, p); out += "ASCII: " + ascii(p.slice(3)) + "\n";
+    const f = famSel(); const dec = f ? decode(f, req, p) : {};
+    for (const fd of (f ? fieldsFor(f, req) : [])) out += `  ${fd.name}: ${fmt(dec[fd.name], fd)} ${fd.unit} [${fd.conf}]\n`;
+  } catch(e) { out += "ERRO: " + e.message + "\n"; }
+  $("didOut").textContent = out + "\n" + $("didOut").textContent;
+}
+async function ident(){
+  if (!elm) return alertBox("Liga primeiro ao adaptador.");
+  const [tx, rx] = target("22F190"); let out = `Identificação  TX ${tx} → RX ${rx}\n`;
+  const t = await elm.setTarget(tx, rx);
+  for (const [did, desc] of Object.entries(DATA.STD_DIDS)) {
+    try { const p = await elm.request("22" + did, t.rx, t.idLen); checkPositive("22" + did, p);
+      out += `  ${did} ${desc.padEnd(28)} ${ascii(p.slice(3)).trim()}  [${toHex(p.slice(3))}]\n`; }
+    catch(e) { out += `  ${did} ${desc.padEnd(28)} -- ${e.message.split(": ").pop()}\n`; }
+  }
+  $("didOut").textContent = out + "\n" + $("didOut").textContent;
+}
+async function vin(){
+  if (!elm) return alertBox("Liga primeiro ao adaptador.");
+  const f = famSel(); const p = f ? DATA.PROFILES[f] : null;
+  const i = decodeVin(await readVin(p && p.tx, p && p.rx));
+  if (p) await elm.setTarget(p.tx, p.rx);
+  $("didOut").textContent = (i ? `VIN ${i.vin} · ${[i.brand, i.model, i.year].filter(Boolean).join(" · ")}` : "VIN não disponível") + "\n\n" + $("didOut").textContent;
+}
+
+// ------------------------------------------------------------- terminal
+async function term(){
+  if (!elm) return alertBox("Liga primeiro ao adaptador.");
+  const c = $("termIn").value.trim(); if (!c) return; $("termIn").value = "";
+  let out = "> " + c + "\n";
+  try { if (/^(AT|ST)/i.test(c)) out += (await elm.cmd(c, 6000)).map(l => "  " + l).join("\n");
+    else { const [tx, rx] = (elm.current || "|").split("|"); const p = await elm.request(c, rx, rx.length); out += dumpText(p); } }
+  catch(e) { out += "  ERRO: " + e.message; }
+  $("termOut").textContent += out + "\n";
+}
+
+// -------------------------------------------------------------- CSV
+function csvText(){ return CSV.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(",")).join("\n"); }
+function alertBox(m){ status(m); log(m); }
+
+// ----------------------------------------------------------------- UI
+(function ui(){
+  const sel = $("car");
+  const opts = [["auto", "auto (detetar)"], ...Object.keys(DATA.PROFILES).map(k => [k, k]),
+                ...Object.keys(DATA.ALIASES).map(k => [k, `${k} → ${DATA.ALIASES[k]}`])];
+  sel.innerHTML = opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join("");
+  document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+    document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
+    document.querySelectorAll("section").forEach(s => s.classList.toggle("on", s.id === b.dataset.t)); });
+  $("btnBle").onclick = () => connect("ble");
+  $("btnSer").onclick = () => connect("serial");
+  $("btnOff").onclick = async () => { looping = false; const t = transport; elm = null; try { await t.close(); } catch(e){}
+    setConnected(false); status("Desligado"); $("btnLoop").textContent = "▶ Ciclo"; };
+  $("btnOnce").onclick = () => readKnown().catch(e => log("ERRO: " + e.message));
+  $("btnSoh").onclick = () => quickSoh();
+  $("btnLoop").onclick = () => loop().catch(e => log("ERRO: " + e.message));
+  $("btnDid").onclick = () => readDid();
+  $("btnIdent").onclick = () => ident().catch(e => log("ERRO: " + e.message));
+  $("btnVin").onclick = () => vin();
+  $("btnTerm").onclick = () => term();
+  $("termIn").addEventListener("keydown", e => { if (e.key === "Enter") term(); });
+  $("btnCsv").onclick = () => { const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csvText()], {type: "text/csv"}));
+    a.download = "ev_obd_" + new Date().toISOString().slice(0,19).replace(/[:T]/g, "-") + ".csv"; a.click(); };
+  $("btnCopy").onclick = async () => { try { await navigator.clipboard.writeText(csvText()); status("CSV copiado"); }
+    catch(e) { status("Não foi possível copiar"); } };
+  $("btnClr").onclick = () => { CSV.length = 1; $("csvN").textContent = "0 linhas"; $("logOut").textContent = ""; };
+  sel.onchange = async () => { if (!elm) return; const v = sel.value;
+    if (v === "auto") { const r = await detect(); fam = r.fam; if (fam) sel.value = fam; }
+    else { fam = DATA.ALIASES[v] || v; const p = DATA.PROFILES[fam]; await elm.setTarget(p.tx, p.rx); }
+    $("rows").innerHTML = ""; status(`Ligado · ${fam || "não detetado"}`); };
+  const ble = "bluetooth" in navigator, ser = "serial" in navigator;
+  $("btnBle").disabled = !ble; $("btnSer").disabled = !ser;
+  $("caps").textContent = `Este navegador: BLE ${ble ? "✔" : "✘"} · Bluetooth clássico (Web Serial) ${ser ? "✔" : "✘"} · ` +
+    `contexto seguro ${window.isSecureContext ? "✔" : "✘ (abre em https://)"}`;
+  if (!ble && !ser) status("Este navegador não suporta Bluetooth Web — usa o Chrome para Android em https://");
+  if ("wakeLock" in navigator) document.addEventListener("click", () => navigator.wakeLock.request("screen").catch(()=>{}), {once: true});
+})();
+</script>
+</body>
+</html>
